@@ -1,4 +1,21 @@
- (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/README.md b/README.md
+index 0f49f838a9ca67990196e7b126fced668c3c5d64..18fe99b105ef1a66696d2261c77d73eebdc48ac0 100644
+--- a/README.md
++++ b/README.md
+@@ -1 +1,11 @@
+-# e-commerce
+\ No newline at end of file
++# e-commerce
++
++## Quick start (Docker infra + scripts)
++
++See:
++- `docs/LOCAL_DOCKER_SETUP.md`
++
++Fast bootstrap:
++```bash
++./scripts/bootstrap-local.sh
++```
 diff --git a/admin-service/README.md b/admin-service/README.md
 new file mode 100644
 index 0000000000000000000000000000000000000000..cc849c3f68d355cfe529109e5ffc80b4244a6289
@@ -4035,6 +4052,113 @@ index 0000000000000000000000000000000000000000..0bb5c83245c14313b5ab1a0817526ed1
 +        assertEquals(orderId, created.orderId());
 +    }
 +}
+diff --git a/docs/LOCAL_DOCKER_SETUP.md b/docs/LOCAL_DOCKER_SETUP.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..dc5901a0d9cfadd8f6a7a1f88b9fcd66c5067f1e
+--- /dev/null
++++ b/docs/LOCAL_DOCKER_SETUP.md
+@@ -0,0 +1,56 @@
++# Local setup with Docker (Postgres + Redis) and scripts
++
++This project now includes helper scripts so you do **not** need to install Postgres/Redis manually.
++
++## 1) Prerequisites
++- Docker Desktop (or Docker Engine + Compose plugin)
++- Java 21
++- Maven 3.9+
++- `psql` and `pg_isready` client tools installed locally
++
++## 2) Start infra
++```bash
++./scripts/start-infra.sh
++```
++This starts:
++- PostgreSQL on `localhost:5432`
++- Redis on `localhost:6379`
++
++## 3) Create all databases + baseline tables
++```bash
++./scripts/init-databases.sh
++```
++This script will:
++- create role `marketplace/marketplace` (if missing)
++- create all service databases
++- grant privileges
++- apply each service `V1__init_*.sql` migration to create tables/indexes
++
++## 4) Start all Spring Boot services
++```bash
++./scripts/start-services.sh
++```
++- starts all modules via `mvn spring-boot:run`
++- writes logs to `.run-logs/`
++- runs `inventory-service` on port `8094` to avoid clash with `search-service` (`8088`)
++
++## 5) One-command bootstrap
++```bash
++./scripts/bootstrap-local.sh
++```
++This runs infra + db init + service startup in one go.
++
++## 6) Import Postman collection
++Import:
++- `postman/marketplace-microservices.postman_collection.json`
++
++Suggested order:
++1. `Auth / Signup`
++2. `Auth / Login` (auto-saves `token`)
++3. Run gateway-routed APIs under `Core APIs via Gateway`
++4. For non-gateway routes, use `Direct service APIs` requests
++
++## 7) Stop infra
++```bash
++./scripts/stop-infra.sh
++```
+diff --git a/infra/docker-compose.yml b/infra/docker-compose.yml
+new file mode 100644
+index 0000000000000000000000000000000000000000..f1907e8d6350fb6776cbd71b0ebb67b7128c2c83
+--- /dev/null
++++ b/infra/docker-compose.yml
+@@ -0,0 +1,39 @@
++version: "3.9"
++
++services:
++  postgres:
++    image: postgres:16-alpine
++    container_name: marketplace-postgres
++    restart: unless-stopped
++    environment:
++      POSTGRES_USER: postgres
++      POSTGRES_PASSWORD: postgres
++      POSTGRES_DB: postgres
++    ports:
++      - "5432:5432"
++    volumes:
++      - marketplace_postgres_data:/var/lib/postgresql/data
++    healthcheck:
++      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
++      interval: 5s
++      timeout: 3s
++      retries: 20
++
++  redis:
++    image: redis:7-alpine
++    container_name: marketplace-redis
++    restart: unless-stopped
++    ports:
++      - "6379:6379"
++    command: ["redis-server", "--appendonly", "yes"]
++    volumes:
++      - marketplace_redis_data:/data
++    healthcheck:
++      test: ["CMD", "redis-cli", "ping"]
++      interval: 5s
++      timeout: 3s
++      retries: 20
++
++volumes:
++  marketplace_postgres_data:
++  marketplace_redis_data:
 diff --git a/inventory-service/README.md b/inventory-service/README.md
 new file mode 100644
 index 0000000000000000000000000000000000000000..50c4cdff54a826a2a571f5b214dd877c54382995
@@ -8062,6 +8186,194 @@ index 0000000000000000000000000000000000000000..20a2a53681f7a612168c4be4ad7d1901
 +        assertEquals(BigDecimal.TEN, created.amount());
 +    }
 +}
+diff --git a/postman/marketplace-microservices.postman_collection.json b/postman/marketplace-microservices.postman_collection.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..25062c11fd17cb47df098cf07f70661ebdecfc34
+--- /dev/null
++++ b/postman/marketplace-microservices.postman_collection.json
+@@ -0,0 +1,182 @@
++{
++  "info": {
++    "name": "Marketplace Microservices",
++    "_postman_id": "8aa11f2d-2f95-45f8-8d48-3c2b2f3fd502",
++    "description": "Collection for auth + gateway routed APIs. Set baseUrl and run Signup/Login first.",
++    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
++  },
++  "variable": [
++    { "key": "baseUrl", "value": "http://localhost:8080" },
++    { "key": "token", "value": "" },
++    { "key": "tenantId", "value": "tenant-1" },
++    { "key": "userId", "value": "" },
++    { "key": "productId", "value": "00000000-0000-0000-0000-000000000001" },
++    { "key": "orderId", "value": "00000000-0000-0000-0000-000000000001" },
++    { "key": "paymentId", "value": "00000000-0000-0000-0000-000000000001" },
++    { "key": "deliveryId", "value": "00000000-0000-0000-0000-000000000001" },
++    { "key": "notificationId", "value": "00000000-0000-0000-0000-000000000001" },
++    { "key": "searchProductId", "value": "00000000-0000-0000-0000-000000000001" },
++    { "key": "targetUserId", "value": "00000000-0000-0000-0000-000000000001" }
++  ],
++  "item": [
++    {
++      "name": "Auth",
++      "item": [
++        {
++          "name": "Signup",
++          "request": {
++            "method": "POST",
++            "header": [{ "key": "Content-Type", "value": "application/json" }],
++            "body": {
++              "mode": "raw",
++              "raw": "{\n  \"email\": \"admin@demo.com\",\n  \"password\": \"Password@123\",\n  \"roles\": [\"ADMIN\"],\n  \"tenantId\": \"{{tenantId}}\"\n}"
++            },
++            "url": "{{baseUrl}}/api/v1/auth/signup"
++          }
++        },
++        {
++          "name": "Login",
++          "event": [
++            {
++              "listen": "test",
++              "script": {
++                "exec": [
++                  "const json = pm.response.json();",
++                  "if (json && json.accessToken) {",
++                  "  pm.collectionVariables.set('token', json.accessToken);",
++                  "}",
++                  "if (json && json.userId) {",
++                  "  pm.collectionVariables.set('userId', json.userId);",
++                  "}"
++                ],
++                "type": "text/javascript"
++              }
++            }
++          ],
++          "request": {
++            "method": "POST",
++            "header": [{ "key": "Content-Type", "value": "application/json" }],
++            "body": {
++              "mode": "raw",
++              "raw": "{\n  \"email\": \"admin@demo.com\",\n  \"password\": \"Password@123\"\n}"
++            },
++            "url": "{{baseUrl}}/api/v1/auth/login"
++          }
++        }
++      ]
++    },
++    {
++      "name": "Core APIs via Gateway",
++      "item": [
++        {
++          "name": "Get My User Profile",
++          "request": {
++            "method": "GET",
++            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
++            "url": "{{baseUrl}}/api/v1/users/me"
++          }
++        },
++        {
++          "name": "Create Category",
++          "request": {
++            "method": "POST",
++            "header": [
++              { "key": "Authorization", "value": "Bearer {{token}}" },
++              { "key": "Content-Type", "value": "application/json" }
++            ],
++            "body": {
++              "mode": "raw",
++              "raw": "{\n  \"name\": \"Grocery\",\n  \"description\": \"Daily essentials\"\n}"
++            },
++            "url": "{{baseUrl}}/api/v1/categories"
++          }
++        },
++        {
++          "name": "List My Orders",
++          "request": {
++            "method": "GET",
++            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
++            "url": "{{baseUrl}}/api/v1/orders/me"
++          }
++        },
++        {
++          "name": "List Deliveries",
++          "request": {
++            "method": "GET",
++            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
++            "url": "{{baseUrl}}/api/v1/deliveries/me"
++          }
++        },
++        {
++          "name": "Search Products",
++          "request": {
++            "method": "GET",
++            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
++            "url": "{{baseUrl}}/api/v1/search/products?q=milk&category=grocery&minPrice=1&maxPrice=999&limit=20"
++          }
++        },
++        {
++          "name": "List Admin Audits",
++          "request": {
++            "method": "GET",
++            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
++            "url": "{{baseUrl}}/api/v1/admin/audits"
++          }
++        }
++      ]
++    },
++    {
++      "name": "Direct service APIs (not currently routed in gateway)",
++      "item": [
++        {
++          "name": "Cart - Get My Cart",
++          "request": {
++            "method": "GET",
++            "header": [
++              { "key": "X-Authenticated-UserId", "value": "{{userId}}" },
++              { "key": "X-Authenticated-Role", "value": "USER" },
++              { "key": "X-Authenticated-TenantId", "value": "{{tenantId}}" }
++            ],
++            "url": "http://localhost:8089/api/v1/cart/me"
++          }
++        },
++        {
++          "name": "Inventory - List My Inventory",
++          "request": {
++            "method": "GET",
++            "header": [
++              { "key": "X-Authenticated-UserId", "value": "{{userId}}" },
++              { "key": "X-Authenticated-Role", "value": "VENDOR" },
++              { "key": "X-Authenticated-TenantId", "value": "{{tenantId}}" }
++            ],
++            "url": "http://localhost:8094/api/v1/inventory/me"
++          }
++        },
++        {
++          "name": "Payments - My Payments",
++          "request": {
++            "method": "GET",
++            "header": [
++              { "key": "X-Authenticated-UserId", "value": "{{userId}}" },
++              { "key": "X-Authenticated-Role", "value": "USER" },
++              { "key": "X-Authenticated-TenantId", "value": "{{tenantId}}" }
++            ],
++            "url": "http://localhost:8091/api/v1/payments/me"
++          }
++        },
++        {
++          "name": "Notifications - My Notifications",
++          "request": {
++            "method": "GET",
++            "header": [
++              { "key": "X-Authenticated-UserId", "value": "{{userId}}" },
++              { "key": "X-Authenticated-Role", "value": "USER" },
++              { "key": "X-Authenticated-TenantId", "value": "{{tenantId}}" }
++            ],
++            "url": "http://localhost:8093/api/v1/notifications/me"
++          }
++        }
++      ]
++    }
++  ]
++}
 diff --git a/product-service/README.md b/product-service/README.md
 new file mode 100644
 index 0000000000000000000000000000000000000000..6ca3b61a0d81e90eaf4b50f6797e6a57a9f8875e
@@ -9125,6 +9437,199 @@ index 0000000000000000000000000000000000000000..70359350e3410a471bfd0216bf12e29c
 +        assertEquals("Flowers", created.name());
 +    }
 +}
+diff --git a/scripts/bootstrap-local.sh b/scripts/bootstrap-local.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..6c59b4ecc22d97b977fe309089ec8c82ab3c6306
+--- /dev/null
++++ b/scripts/bootstrap-local.sh
+@@ -0,0 +1,10 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++
++"${ROOT_DIR}/scripts/start-infra.sh"
++"${ROOT_DIR}/scripts/init-databases.sh"
++"${ROOT_DIR}/scripts/start-services.sh"
++
++echo "Bootstrap completed."
+diff --git a/scripts/init-databases.sh b/scripts/init-databases.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..23540985e14460f4c3b7cd9e87733978826fd7f9
+--- /dev/null
++++ b/scripts/init-databases.sh
+@@ -0,0 +1,92 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++
++PG_HOST="${PG_HOST:-localhost}"
++PG_PORT="${PG_PORT:-5432}"
++PG_SUPERUSER="${PG_SUPERUSER:-postgres}"
++PG_SUPERPASS="${PG_SUPERPASS:-postgres}"
++APP_DB_USER="${APP_DB_USER:-marketplace}"
++APP_DB_PASS="${APP_DB_PASS:-marketplace}"
++
++DBS=(
++  marketplace_auth
++  marketplace_user
++  marketplace_vendor
++  marketplace_product
++  marketplace_inventory
++  marketplace_order
++  marketplace_payment
++  marketplace_delivery
++  marketplace_notification
++  marketplace_search
++  marketplace_admin
++)
++
++declare -A MIGRATIONS=(
++  [marketplace_auth]="auth-service/src/main/resources/db/migration/V1__init_auth_schema.sql"
++  [marketplace_user]="user-service/src/main/resources/db/migration/V1__init_user_schema.sql"
++  [marketplace_vendor]="vendor-service/src/main/resources/db/migration/V1__init_vendor_schema.sql"
++  [marketplace_product]="product-service/src/main/resources/db/migration/V1__init_product_schema.sql"
++  [marketplace_inventory]="inventory-service/src/main/resources/db/migration/V1__init_inventory_schema.sql"
++  [marketplace_order]="order-service/src/main/resources/db/migration/V1__init_order_schema.sql"
++  [marketplace_payment]="payment-service/src/main/resources/db/migration/V1__init_payment_schema.sql"
++  [marketplace_delivery]="delivery-service/src/main/resources/db/migration/V1__init_delivery_schema.sql"
++  [marketplace_notification]="notification-service/src/main/resources/db/migration/V1__init_notification_schema.sql"
++  [marketplace_search]="search-service/src/main/resources/db/migration/V1__init_search_schema.sql"
++  [marketplace_admin]="admin-service/src/main/resources/db/migration/V1__init_admin_schema.sql"
++)
++
++need_cmd() {
++  command -v "$1" >/dev/null 2>&1 || { echo "Missing required command: $1" >&2; exit 1; }
++}
++
++need_cmd psql
++need_cmd pg_isready
++
++echo "[1/4] Waiting for PostgreSQL on ${PG_HOST}:${PG_PORT}..."
++export PGPASSWORD="$PG_SUPERPASS"
++until pg_isready -h "$PG_HOST" -p "$PG_PORT" -U "$PG_SUPERUSER" -d postgres >/dev/null 2>&1; do
++  sleep 1
++done
++
++echo "[2/4] Ensuring app role exists: ${APP_DB_USER}"
++psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_SUPERUSER" -d postgres -v ON_ERROR_STOP=1 <<SQL
++DO
++\$\$
++BEGIN
++   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${APP_DB_USER}') THEN
++      CREATE ROLE ${APP_DB_USER} LOGIN PASSWORD '${APP_DB_PASS}';
++   END IF;
++END
++\$\$;
++SQL
++
++echo "[3/4] Creating databases + grants"
++for db in "${DBS[@]}"; do
++  psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_SUPERUSER" -d postgres -v ON_ERROR_STOP=1 <<SQL
++SELECT 'CREATE DATABASE ${db}' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${db}')\gexec
++GRANT ALL PRIVILEGES ON DATABASE ${db} TO ${APP_DB_USER};
++SQL
++
++  psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_SUPERUSER" -d "$db" -v ON_ERROR_STOP=1 <<SQL
++GRANT ALL ON SCHEMA public TO ${APP_DB_USER};
++ALTER SCHEMA public OWNER TO ${APP_DB_USER};
++SQL
++done
++
++echo "[4/4] Applying base SQL migrations (V1)"
++for db in "${DBS[@]}"; do
++  migration_path="${MIGRATIONS[$db]}"
++  full_path="${ROOT_DIR}/${migration_path}"
++  if [[ ! -f "$full_path" ]]; then
++    echo "ERROR: migration file not found for ${db}: ${full_path}" >&2
++    exit 1
++  fi
++
++  echo "  -> ${db} <= ${migration_path}"
++  psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_SUPERUSER" -d "$db" -v ON_ERROR_STOP=1 -f "$full_path"
++done
++
++echo "Done. Databases and baseline tables are ready."
+diff --git a/scripts/start-infra.sh b/scripts/start-infra.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..3c085e34d5242ab3ae2048a17a47aceb2e19cfe9
+--- /dev/null
++++ b/scripts/start-infra.sh
+@@ -0,0 +1,15 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++COMPOSE_FILE="${ROOT_DIR}/infra/docker-compose.yml"
++
++command -v docker >/dev/null 2>&1 || { echo "docker not found" >&2; exit 1; }
++
++echo "Starting PostgreSQL + Redis..."
++docker compose -f "$COMPOSE_FILE" up -d
++
++echo "Waiting for containers to become healthy..."
++docker compose -f "$COMPOSE_FILE" ps
++
++echo "Done."
+diff --git a/scripts/start-services.sh b/scripts/start-services.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..626ef4b54777905879e7a5f4be0dd428ce63c681
+--- /dev/null
++++ b/scripts/start-services.sh
+@@ -0,0 +1,37 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++LOG_DIR="${ROOT_DIR}/.run-logs"
++mkdir -p "$LOG_DIR"
++
++# Avoid default port clash (inventory-service and search-service both configured for 8088)
++INVENTORY_PORT="${INVENTORY_PORT:-8094}"
++
++start_service() {
++  local name="$1"
++  local dir="$2"
++  local extra_args="${3:-}"
++
++  echo "Starting ${name}..."
++  (cd "${ROOT_DIR}/${dir}" && nohup mvn spring-boot:run ${extra_args} > "${LOG_DIR}/${name}.log" 2>&1 &)
++}
++
++start_service "auth-service" "auth-service"
++start_service "user-service" "user-service"
++start_service "vendor-service" "vendor-service"
++start_service "product-service" "product-service"
++start_service "inventory-service" "inventory-service" "-Dspring-boot.run.arguments=--server.port=${INVENTORY_PORT}"
++start_service "cart-service" "cart-service"
++start_service "order-service" "order-service"
++start_service "payment-service" "payment-service"
++start_service "delivery-service" "delivery-service"
++start_service "notification-service" "notification-service"
++start_service "search-service" "search-service"
++start_service "admin-service" "admin-service"
++
++# Gateway last
++start_service "api-gateway" "api-gateway"
++
++echo "All start commands triggered. Logs: ${LOG_DIR}"
++echo "Tip: tail -f ${LOG_DIR}/api-gateway.log"
+diff --git a/scripts/stop-infra.sh b/scripts/stop-infra.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..69bc891d05917d0fb11f7047f7a53602ceb3a6c8
+--- /dev/null
++++ b/scripts/stop-infra.sh
+@@ -0,0 +1,9 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++COMPOSE_FILE="${ROOT_DIR}/infra/docker-compose.yml"
++
++command -v docker >/dev/null 2>&1 || { echo "docker not found" >&2; exit 1; }
++
++docker compose -f "$COMPOSE_FILE" down
 diff --git a/search-service/README.md b/search-service/README.md
 new file mode 100644
 index 0000000000000000000000000000000000000000..bed4d0614e4e6af27a0abe84708426dc142770ac
@@ -12047,6 +12552,3 @@ index 0000000000000000000000000000000000000000..6a806d54ddf8e595f664444eac86a3db
 +        assertEquals("Flower Shop", actual.storeName());
 +    }
 +}
- 
-EOF
-)
